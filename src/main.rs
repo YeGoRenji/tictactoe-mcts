@@ -143,7 +143,8 @@ mod mcts {
         parent_index: i32,
         children_indeces: [i32; 9],
         visits: i32,
-        score: i32
+        value: i32,
+        ucb: f32
     }
     
     impl Node {
@@ -151,7 +152,7 @@ mod mcts {
             let board = [Cell::None; 9];
             let children_indeces = [-1; 9];
             let player = Player::X;
-            Self { board, player, parent_index, children_indeces, visits: 0, score: 0 }
+            Self { board, player, parent_index, children_indeces, visits: 0, value: 0, ucb: 0.0 }
         }
     }
 
@@ -182,6 +183,7 @@ fn main() {
         }
     }
 
+    test.print();
     match test.check_final() {
         BoardState::None => assert!(false),
         BoardState::Win(cell) => println!("Winner is {}", cell),
