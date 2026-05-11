@@ -314,14 +314,13 @@ mod mcts {
             backpropagate(curr_idx, &mut mct_nodes, value, sim_last_player);
         }
         
-        export_tree_dot(&mct_nodes, nodes_size, 9, "./tree.dot");
+        export_tree_dot(&mct_nodes, nodes_size, 128, "./tree.dot");
         
         let mct_move: usize = mct_best_next_move(&mct_nodes);
         println!("best move is {}", mct_move);
         current_board.play(mct_move, bot.into()).unwrap();
     }
 
-    // value is -1 if bot lost, +1 if bot won, 0 if its draw
     fn backpropagate(self_idx: i32, mct_nodes: &mut [Node], value: i32, sim_last_player: Player) {
         let mut current_idx = self_idx;
         while current_idx != -1 {
@@ -427,7 +426,7 @@ mod debug {
         writeln!(file, "    node [shape=box];").unwrap();
 
         for (i, node) in nodes.iter().enumerate() {
-            if i > size {
+            if i >= size {
                 break;
             }
 
@@ -500,13 +499,13 @@ fn main() {
                 println!("Please type a number!");
             }
         } else {
-            let start = Instant::now(); // Start the timer
+            // let start = Instant::now();
     
             mct_play(&mut board, 1000, bot_is);
             
-            let duration = start.elapsed(); // Calculate time passed
+            // let duration = start.elapsed();
             
-            println!("Time elapsed in my_slow_function() is: {:?}", duration);
+            // println!("Time elapsed is: {:?}", duration);
             
             current_player.next();
         }
