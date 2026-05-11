@@ -1,4 +1,4 @@
-use std::io::{self, Write};
+use std::{io::{self, Write}, time::Instant};
 
 mod game_engine {
     use std::{fmt, io::{self}, num::ParseIntError};
@@ -167,26 +167,26 @@ mod game_engine {
                 
                 [0, 4, 8],
                 [2, 4, 6],
-                ];
-                
-                // | 0 | 1 | 2 |
-                // -------------
-                // | 3 | 4 | 5 |
-                // -------------
-                // | 6 | 7 | 8 |
-                for ref possible_win in possible_wins {
-                    if self[possible_win[0]] != Cell::None 
-                    && self[possible_win[0]] == self[possible_win[1]]
-                    && self[possible_win[1]] == self[possible_win[2]] {
-                        return BoardState::Win(self[possible_win[0]].into());
-                    }
+            ];
+            
+            // | 0 | 1 | 2 |
+            // -------------
+            // | 3 | 4 | 5 |
+            // -------------
+            // | 6 | 7 | 8 |
+            for ref possible_win in possible_wins {
+                if self[possible_win[0]] != Cell::None 
+                && self[possible_win[0]] == self[possible_win[1]]
+                && self[possible_win[1]] == self[possible_win[2]] {
+                    return BoardState::Win(self[possible_win[0]].into());
                 }
-                
-                if self.contains(&Cell::None) {
-                    BoardState::None
-                } else {
-                    BoardState::Draw
-                }
+            }
+            
+            if self.contains(&Cell::None) {
+                BoardState::None
+            } else {
+                BoardState::Draw
+            }
         }
         
         fn is_terminal(&self) -> bool {
@@ -203,19 +203,20 @@ mod game_engine {
 
 mod mcts {
     use crate::game_engine::*;
+    use crate::debug::*;
 
-    const UCB_CNST: f32 = 2.0;
+    const UCB_CNST: f32 = 1.0;
     const NODES_N: usize = 10000;
 
     #[derive(Clone, Copy, Debug)]
-    struct Node {
-        board: Board,
-        player: Player,
-        parent_index: i32,
-        children_indices: [i32; 9],
-        action: usize,
-        visits: i32,
-        value: i32,
+    pub struct Node {
+        pub(crate) board: Board,
+        pub(crate) player: Player,
+        pub(crate) parent_index: i32,
+        pub(crate) children_indices: [i32; 9],
+        pub(crate) action: usize,
+        pub(crate) visits: i32,
+        pub(crate) value: i32,
     }
     
     impl Node {
@@ -259,12 +260,14 @@ mod mcts {
             self.board.check_final() != BoardState::None
         }
 
-        pub fn rollout(&self) -> i32 {
+        pub fn rollout(&self) -> (i32, Player) {
             let mut sim_board: Board = self.board;
             let mut current_player: Player = self.player;
             loop {
                 if sim_board.is_terminal() {
-                    return board_state_to_value(sim_board, current_player);
+                    // sim_board.print(false);
+                    let val = board_state_to_value(sim_board, current_player);
+                    return (val, current_player);
                 }
                 current_player.next();
                 if let Err(err) = sim_board.play_random(current_player.into()) {
@@ -297,8 +300,8 @@ mod mcts {
         let mut mct_nodes: [Node; NODES_N] = [Node::new_from_board(-1, current_board, bot.get_next(), 0); NODES_N];
         let mut nodes_size: usize = 1;
         
-        for it in 0..iterations {
-            println!("Iteration {} ================", it);
+        for _ in 0..iterations {
+            // println!("Iteration {} ================", it);
             let mut curr_idx= mct_select(&mct_nodes);
             if mct_nodes[curr_idx as usize].visits != 0 {
                 mct_nodes = mct_expand(curr_idx, mct_nodes, &mut nodes_size);
@@ -306,20 +309,24 @@ mod mcts {
                     curr_idx = mct_nodes[curr_idx as usize].children_indices[0];
                 }
             }
-            let value = mct_nodes[curr_idx as usize].rollout();
-            backpropagate(curr_idx, bot, &mut mct_nodes, value);
+            let (value, sim_last_player) = mct_nodes[curr_idx as usize].rollout();
+            assert!(value == 0 || value == 1);
+            backpropagate(curr_idx, &mut mct_nodes, value, sim_last_player);
         }
+        
+        export_tree_dot(&mct_nodes, nodes_size, 9, "./tree.dot");
         
         let mct_move: usize = mct_best_next_move(&mct_nodes);
         println!("best move is {}", mct_move);
         current_board.play(mct_move, bot.into()).unwrap();
     }
 
-    fn backpropagate(self_idx: i32, bot: Player, mct_nodes: &mut [Node], value: i32) {
+    // value is -1 if bot lost, +1 if bot won, 0 if its draw
+    fn backpropagate(self_idx: i32, mct_nodes: &mut [Node], value: i32, sim_last_player: Player) {
         let mut current_idx = self_idx;
         while current_idx != -1 {
             let current = &mut mct_nodes[current_idx as usize];
-            current.value += current.get_value_multiplier(bot) * value;
+            current.value += current.get_value_multiplier(sim_last_player) * value;
             current.visits += 1;
             current_idx = current.parent_index;
         }
@@ -335,7 +342,7 @@ mod mcts {
                 break;
             }
             let visits = nodes[idx as usize].visits;
-            nodes[idx as usize].dbg();
+            // nodes[idx as usize].dbg();
             if visits > max_visits {
                 max_visits = visits;
                 max_visits_idx = idx;
@@ -356,7 +363,7 @@ mod mcts {
                     break; // no more child
                 }
                 let child = &nodes[child_idx as usize];
-                if child.visits == 0 {
+                if child.visits == 0 { // Has infinite UCB
                     return child_idx;
                 }
                 let ucb = child.ucb_calc(nodes);
@@ -375,6 +382,7 @@ mod mcts {
         if nodes[node_index as usize].is_terminal() {
             return nodes;
         }
+        // println!("Expanding {node_index} ============");
         let node_board = nodes[node_index as usize].board;
         let node_player = nodes[node_index as usize].player;
         let next_player = node_player.get_next();
@@ -389,13 +397,77 @@ mod mcts {
                 Node::new_from_board(node_index, &next_board, next_player, cell_idx)
             })
             .collect();
-
         for (idx, node) in children_nodes.iter().enumerate() {
             nodes[*nodes_size + idx] = *node;
             nodes[node_index as usize].children_indices[idx] = (*nodes_size + idx) as i32;
         }
-        *nodes_size = *nodes_size + 9;
+        *nodes_size = *nodes_size + children_nodes.len();
         return nodes;
+    }
+}
+
+mod debug {
+    use crate::game_engine::*;
+    use crate::mcts::*;
+    use std::fs::File;
+    use std::io::Write;
+
+    
+    fn board_to_string(board: &Board) -> String {
+        format!("|{}|{}|{}|\\n|{}|{}|{}|\\n|{}|{}|{}|",
+                    board[0], board[1], board[2],
+                    board[3], board[4], board[5],
+                    board[6], board[7], board[8])
+    }
+
+    pub fn export_tree_dot(nodes: &[Node], size: usize, max_id: usize, path: &str) {
+        let mut file = File::create(path).unwrap();
+
+        writeln!(file, "digraph MCTS {{").unwrap();
+        writeln!(file, "    node [shape=box];").unwrap();
+
+        for (i, node) in nodes.iter().enumerate() {
+            if i > size {
+                break;
+            }
+
+            if i > max_id {
+                break;
+            }
+            let board_str = board_to_string(&node.board);
+
+            let label = format!(
+                "id={}\\na={}\\nV={}\\nN={}\\n{}",
+                i,
+                node.action,
+                node.value,
+                node.visits,
+                board_str
+            );
+
+            writeln!(
+                file,
+                r#"    {} [label="{}"];"#,
+                i,
+                label
+            ).unwrap();
+
+            for &child in &node.children_indices {
+                
+                if child == -1 {
+                    break;
+                }
+                if child as usize > max_id {
+                    break;
+                }
+
+                if child >= 0 {
+                    writeln!(file, "    {} -> {};", i, child).unwrap();
+                }
+            }
+        }
+
+        writeln!(file, "}}").unwrap();
     }
 }
 
@@ -409,10 +481,13 @@ fn main() {
 
     let mut current_player = Player::X;
 
+    let user_is = Player::O;
+    let bot_is = user_is.get_next();
+
     while board.check_final() == BoardState::None {
         board.print(true);
 
-        if current_player == Player::O {
+        if user_is == current_player {
             print!("{}'s turn -> index: ", current_player);
             io::stdout().flush().unwrap();
             if let Ok(index) = read_index(&mut input) {
@@ -425,7 +500,14 @@ fn main() {
                 println!("Please type a number!");
             }
         } else {
-            mct_play(&mut board, 3000, Player::X);
+            let start = Instant::now(); // Start the timer
+    
+            mct_play(&mut board, 1000, bot_is);
+            
+            let duration = start.elapsed(); // Calculate time passed
+            
+            println!("Time elapsed in my_slow_function() is: {:?}", duration);
+            
             current_player.next();
         }
     }
